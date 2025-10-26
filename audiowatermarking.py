@@ -31,40 +31,8 @@ def list_audio_files(base_path):
     # Convert to strings and sort for consistent ordering
     return sorted(str(f) for f in flac_files)
 
-# Get and list all audio files
-audio_files = list_audio_files(DATASET_PATH)
-
-# Print summary
-print(f"Found {len(audio_files)} audio files")
-if audio_files:
-    print("\nFirst 5 files:")
-    for i, file in enumerate(audio_files[:5], 1):
-        print(f"{i}. {file}")
-
-    print("\nSpeakers and number of files:")
-    # Show unique speaker IDs and number of files per speaker
-    speakers = {}
-    for file in audio_files:
-        parts = Path(file).parts
-        # Look for speaker ID in the path (it's the directory before the last one)
-
-        speaker_id = None
-        for i, part in enumerate(parts):
-            if part == 'dev-clean' and i + 1 < len(parts) and parts[i+1].isdigit():
-                speaker_id = parts[i+1]
-                break
-
-        if speaker_id is None and len(parts) > 1:
-            # If we couldn't find a speaker ID, use the parent directory name as fallback
-            speaker_id = parts[-2] if parts[-2] != 'dev-clean' else 'unknown'
-
-        speakers[speaker_id] = speakers.get(speaker_id, 0) + 1
-
-    print("\nSpeakers and number of files:")
-    for speaker, count in sorted(speakers.items()):
-        print(f"- Speaker {speaker}: {count} files")
-
-    print("\nSpeaker ID mapping:", speakers)
+# Get audio files (only when running as main script)
+audio_files = []
 
 
 #filenamecreation
@@ -253,9 +221,45 @@ def wav_to_stft_tensor(input_data, cache_dir=None, n_fft=1024, hop_length=256, w
     return stft_tensor
 
 
-# Example usage
-sample_stft = wav_to_stft_tensor(
-    input_data=audio_files[0],
-    cache_dir="./cache/stft"
-)
-print("STFT tensor shape:", sample_stft.shape)  # (2, freq_bins, frames)
+if __name__ == "__main__":
+    # Get and list all audio files
+    audio_files = list_audio_files(DATASET_PATH)
+
+    # Print summary
+    print(f"Found {len(audio_files)} audio files")
+    if audio_files:
+        print("\nFirst 5 files:")
+        for i, file in enumerate(audio_files[:5], 1):
+            print(f"{i}. {file}")
+
+        print("\nSpeakers and number of files:")
+        # Show unique speaker IDs and number of files per speaker
+        speakers = {}
+        for file in audio_files:
+            parts = Path(file).parts
+            # Look for speaker ID in the path (it's the directory before the last one)
+
+            speaker_id = None
+            for i, part in enumerate(parts):
+                if part == 'dev-clean' and i + 1 < len(parts) and parts[i+1].isdigit():
+                    speaker_id = parts[i+1]
+                    break
+
+            if speaker_id is None and len(parts) > 1:
+                # If we couldn't find a speaker ID, use the parent directory name as fallback
+                speaker_id = parts[-2] if parts[-2] != 'dev-clean' else 'unknown'
+
+            speakers[speaker_id] = speakers.get(speaker_id, 0) + 1
+
+        print("\nSpeakers and number of files:")
+        for speaker, count in sorted(speakers.items()):
+            print(f"- Speaker {speaker}: {count} files")
+
+        print("\nSpeaker ID mapping:", speakers)
+
+    # Example usage
+    sample_stft = wav_to_stft_tensor(
+        input_data=audio_files[0],
+        cache_dir="./cache/stft"
+    )
+    print("STFT tensor shape:", sample_stft.shape)  # (2, freq_bins, frames)

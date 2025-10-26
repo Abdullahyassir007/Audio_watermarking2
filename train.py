@@ -48,7 +48,7 @@ def train_one_epoch(model, msg_encoder, msg_decoder, dataloader, optimizer, devi
     total_msg_loss = 0.0
     total_rec_loss = 0.0
     
-    progress = tqdm(dataloader, desc=f"Epoch {epoch+1}")
+    progress = tqdm(dataloader, desc=f"Epoch {epoch+1}", ncols=100, bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]')
     
     for batch in progress:
         # Unpack the batch
