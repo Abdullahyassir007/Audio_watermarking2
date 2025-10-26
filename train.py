@@ -10,9 +10,10 @@ import torch.nn.functional as F
 import os
 
 class AudioWatermarkingDataset(Dataset):
-    def __init__(self, audio_files, msg_length=32, transform=None):
+    def __init__(self, audio_files, msg_length=32, cache_dir=None, transform=None):
         self.audio_files = [str(f) for f in audio_files]  # Convert Path objects to strings
         self.msg_length = msg_length
+        self.cache_dir = cache_dir
         self.transform = transform
         
     def __len__(self):
@@ -29,7 +30,7 @@ class AudioWatermarkingDataset(Dataset):
         message = torch.from_numpy(message)
         
         # Return as a tuple of tensors (required for default_collate)
-        return audio_file, message
+        return audio_file, message, self.cache_dir
 
 def train_one_epoch(model, msg_encoder, msg_decoder, dataloader, optimizer, device, epoch):
     model.train()
@@ -44,7 +45,7 @@ def train_one_epoch(model, msg_encoder, msg_decoder, dataloader, optimizer, devi
     
     for batch in progress:
         # Unpack the batch
-        audio_paths, messages = batch
+        audio_paths, messages, cache_dirs = batch
         messages = messages.to(device)
         
         # Process each audio file in the batch
@@ -56,10 +57,12 @@ def train_one_epoch(model, msg_encoder, msg_decoder, dataloader, optimizer, devi
             # Load and process audio
             message = messages[i].unsqueeze(0)  # Add batch dim
             
-            # Get STFT
+            # Get STFT (with verbose=False and plot=False to suppress output)
             stft = wav_to_stft_tensor(
                 input_data=audio_path,
-                cache_dir="./cache/stft"
+                cache_dir=cache_dirs[i],
+                verbose=False,
+                plot=False
             ).unsqueeze(0).to(device)  # Add batch dim
             
             # Encode message
@@ -122,15 +125,25 @@ def main():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
     
+    # Ask user about caching
+    use_cache = input("Do you want to use caching? (yes/no): ").strip().lower()
+    use_cache = use_cache in ['yes', 'y']
+    
+    if use_cache:
+        print("Caching enabled - processed files will be saved for faster loading")
+        # Create cache directories
+        os.makedirs("./cache/stft", exist_ok=True)
+        os.makedirs("./cache/wavform", exist_ok=True)
+        cache_dir = "./cache/stft"
+    else:
+        print("Caching disabled - files will be processed fresh each time")
+        cache_dir = None
+    
     # Hyperparameters
     batch_size = 4
     msg_length = 32
     learning_rate = 1e-4
     num_epochs = 1
-    
-    # Create cache directories
-    os.makedirs("./cache/stft", exist_ok=True)
-    os.makedirs("./cache/wavform", exist_ok=True)
     
     # Initialize models
     inn = INN2D(in_channels=4, hidden_channels=64, n_blocks=4).to(device)
@@ -145,7 +158,7 @@ def main():
     audio_dir = Path("./Dataset/dev-clean/LibriSpeech/dev-clean")
     audio_files = list(audio_dir.rglob("*.flac"))[:100]  # Use first 100 files for testing
     
-    dataset = AudioWatermarkingDataset(audio_files, msg_length=msg_length)
+    dataset = AudioWatermarkingDataset(audio_files, msg_length=msg_length, cache_dir=cache_dir)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=4)
     
     # Training loop
