@@ -30,10 +30,16 @@ class AudioWatermarkingDataset(Dataset):
         # Convert to tensor
         message = torch.from_numpy(message)
         
-        # Return as a tuple of tensors (required for default_collate)
-        return audio_file, message, self.cache_dir
+        # Return audio path and message (cache_dir is stored in dataset)
+        return audio_file, message
 
-def train_one_epoch(model, msg_encoder, msg_decoder, dataloader, optimizer, device, epoch):
+def custom_collate_fn(batch):
+    """Custom collate function to handle batch data"""
+    audio_paths = [item[0] for item in batch]
+    messages = torch.stack([item[1] for item in batch])
+    return audio_paths, messages
+
+def train_one_epoch(model, msg_encoder, msg_decoder, dataloader, optimizer, device, epoch, cache_dir):
     model.train()
     msg_encoder.train()
     msg_decoder.train()
@@ -46,7 +52,7 @@ def train_one_epoch(model, msg_encoder, msg_decoder, dataloader, optimizer, devi
     
     for batch in progress:
         # Unpack the batch
-        audio_paths, messages, cache_dirs = batch
+        audio_paths, messages = batch
         messages = messages.to(device)
         
         # Process each audio file in the batch
@@ -61,7 +67,7 @@ def train_one_epoch(model, msg_encoder, msg_decoder, dataloader, optimizer, devi
             # Get STFT (with verbose=False and plot=False to suppress output)
             stft = wav_to_stft_tensor(
                 input_data=audio_path,
-                cache_dir=cache_dirs[i],
+                cache_dir=cache_dir,
                 verbose=False,
                 plot=False
             ).unsqueeze(0).to(device)  # Add batch dim
@@ -171,11 +177,11 @@ def main():
     audio_files = list(audio_dir.rglob("*.flac"))[:100]  # Use first 100 files for testing
     
     dataset = AudioWatermarkingDataset(audio_files, msg_length=msg_length, cache_dir=cache_dir)
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=4)
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=2, collate_fn=custom_collate_fn)
     
     # Training loop
     for epoch in range(num_epochs):
-        metrics = train_one_epoch(inn, msg_encoder, msg_decoder, dataloader, optimizer, device, epoch)
+        metrics = train_one_epoch(inn, msg_encoder, msg_decoder, dataloader, optimizer, device, epoch, cache_dir)
         
         print(f"Epoch {epoch+1}/{num_epochs}:")
         print(f"  Loss: {metrics['loss']:.6f}")
