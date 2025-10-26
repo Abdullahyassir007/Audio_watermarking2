@@ -4,7 +4,7 @@ Copy and paste these cells into your Colab notebook
 """
 
 # ============================================
-# CELL 1: Plot Training History
+# CELL 1: Plot Training and Validation History
 # ============================================
 import matplotlib.pyplot as plt
 import torch
@@ -13,33 +13,58 @@ from pathlib import Path
 checkpoint_dir = "./checkpoints"  # Change this to your checkpoint directory
 checkpoint_files = sorted(Path(checkpoint_dir).glob("*.pt"))
 
-epochs, losses, msg_losses = [], [], []
+epochs = []
+train_losses, val_losses = [], []
+train_accs, val_accs = [], []
 
 for ckpt_file in checkpoint_files:
     try:
         checkpoint = torch.load(ckpt_file, map_location='cpu')
         epochs.append(checkpoint['epoch'] + 1)
-        metrics = checkpoint.get('metrics', {})
-        losses.append(metrics.get('loss', 0))
-        msg_losses.append(metrics.get('msg_loss', 0))
+        
+        train_metrics = checkpoint.get('train_metrics', checkpoint.get('metrics', {}))
+        val_metrics = checkpoint.get('val_metrics', {})
+        
+        train_losses.append(train_metrics.get('loss', 0))
+        train_accs.append(train_metrics.get('bit_accuracy', 0) * 100)
+        
+        if val_metrics:
+            val_losses.append(val_metrics.get('loss', 0))
+            val_accs.append(val_metrics.get('bit_accuracy', 0) * 100)
     except:
         continue
 
 if epochs:
-    plt.figure(figsize=(10, 5))
-    plt.plot(epochs, losses, 'b-', linewidth=2, marker='o', label='Total Loss')
-    plt.plot(epochs, msg_losses, 'r-', linewidth=2, marker='s', label='Message Loss')
-    plt.xlabel('Epoch', fontsize=12)
-    plt.ylabel('Loss', fontsize=12)
-    plt.title('Training Loss Over Epochs', fontsize=14, fontweight='bold')
-    plt.legend(fontsize=11)
-    plt.grid(True, alpha=0.3)
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
+    
+    # Plot Loss
+    ax1.plot(epochs, train_losses, 'b-', linewidth=2, marker='o', label='Train Loss')
+    if val_losses:
+        ax1.plot(epochs, val_losses, 'r-', linewidth=2, marker='s', label='Val Loss')
+    ax1.set_xlabel('Epoch')
+    ax1.set_ylabel('Loss')
+    ax1.set_title('Training and Validation Loss')
+    ax1.legend()
+    ax1.grid(True, alpha=0.3)
+    
+    # Plot Accuracy
+    ax2.plot(epochs, train_accs, 'b-', linewidth=2, marker='o', label='Train Accuracy')
+    if val_accs:
+        ax2.plot(epochs, val_accs, 'r-', linewidth=2, marker='s', label='Val Accuracy')
+    ax2.set_xlabel('Epoch')
+    ax2.set_ylabel('Accuracy (%)')
+    ax2.set_title('Training and Validation Accuracy')
+    ax2.set_ylim([0, 105])
+    ax2.axhline(y=100, color='green', linestyle='--', alpha=0.5)
+    ax2.legend()
+    ax2.grid(True, alpha=0.3)
+    
     plt.tight_layout()
     plt.show()
     
-    print(f"Total Epochs: {len(epochs)}")
-    print(f"Final Loss: {losses[-1]:.4f}")
-    print(f"Best Loss: {min(losses):.4f} at Epoch {epochs[losses.index(min(losses))]}")
+    print(f"Final Train Loss: {train_losses[-1]:.4f} | Train Acc: {train_accs[-1]:.2f}%")
+    if val_losses:
+        print(f"Final Val Loss: {val_losses[-1]:.4f} | Val Acc: {val_accs[-1]:.2f}%")
 else:
     print("No checkpoints found!")
 

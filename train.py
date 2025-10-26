@@ -47,6 +47,8 @@ def train_one_epoch(model, msg_encoder, msg_decoder, dataloader, optimizer, devi
     total_loss = 0.0
     total_msg_loss = 0.0
     total_rec_loss = 0.0
+    total_bit_accuracy = 0.0
+    num_samples = 0
     
     progress = tqdm(dataloader, desc=f"Epoch {epoch+1}", ncols=100, bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]')
     
@@ -59,6 +61,7 @@ def train_one_epoch(model, msg_encoder, msg_decoder, dataloader, optimizer, devi
         batch_loss = 0.0
         batch_msg_loss = 0.0
         batch_rec_loss = 0.0
+        batch_bit_acc = 0.0
         
         for i, audio_path in enumerate(audio_paths):
             # Load and process audio
@@ -97,9 +100,14 @@ def train_one_epoch(model, msg_encoder, msg_decoder, dataloader, optimizer, devi
             msg_loss = F.binary_cross_entropy(decoded_msg, message)
             loss = rec_loss + msg_loss
             
+            # Compute bit accuracy
+            predicted_bits = (decoded_msg > 0.5).float()
+            bit_accuracy = (predicted_bits == message).float().mean()
+            
             batch_loss += loss.item()
             batch_msg_loss += msg_loss.item()
             batch_rec_loss += rec_loss.item()
+            batch_bit_acc += bit_accuracy.item()
             
             # Backward pass
             optimizer.zero_grad()
@@ -110,21 +118,78 @@ def train_one_epoch(model, msg_encoder, msg_decoder, dataloader, optimizer, devi
         avg_batch_loss = batch_loss / len(audio_paths)
         avg_batch_msg = batch_msg_loss / len(audio_paths)
         avg_batch_rec = batch_rec_loss / len(audio_paths)
+        avg_batch_acc = batch_bit_acc / len(audio_paths)
         
         total_loss += batch_loss
         total_msg_loss += batch_msg_loss
         total_rec_loss += batch_rec_loss
+        total_bit_accuracy += batch_bit_acc
+        num_samples += len(audio_paths)
         
         progress.set_postfix({
             'loss': avg_batch_loss,
-            'msg_loss': avg_batch_msg,
-            'rec_loss': avg_batch_rec
+            'acc': f'{avg_batch_acc*100:.1f}%'
         })
     
     return {
         'loss': total_loss / len(dataloader.dataset),
         'msg_loss': total_msg_loss / len(dataloader.dataset),
-        'rec_loss': total_rec_loss / len(dataloader.dataset)
+        'rec_loss': total_rec_loss / len(dataloader.dataset),
+        'bit_accuracy': total_bit_accuracy / num_samples
+    }
+
+def validate(model, msg_encoder, msg_decoder, dataloader, device, cache_dir):
+    """Validation function"""
+    model.eval()
+    msg_encoder.eval()
+    msg_decoder.eval()
+    
+    total_loss = 0.0
+    total_bit_accuracy = 0.0
+    num_samples = 0
+    
+    with torch.no_grad():
+        for batch in dataloader:
+            audio_paths, messages = batch
+            messages = messages.to(device)
+            
+            for i, audio_path in enumerate(audio_paths):
+                message = messages[i].unsqueeze(0)
+                
+                stft = wav_to_stft_tensor(
+                    input_data=audio_path,
+                    cache_dir=cache_dir,
+                    verbose=False,
+                    plot=False
+                ).unsqueeze(0).to(device)
+                
+                msg_map = msg_encoder(message, target_shape=stft.shape[2:])
+                
+                x = build_inn_input(
+                    stft_real=stft[:, 0],
+                    stft_imag=stft[:, 1],
+                    msg_map=msg_map,
+                    aux_map=None
+                )
+                
+                y, _ = model(x)
+                x_recon, _ = model(y, reverse=True)
+                decoded_msg = msg_decoder(y)
+                
+                rec_loss = F.mse_loss(x_recon, x)
+                msg_loss = F.binary_cross_entropy(decoded_msg, message)
+                loss = rec_loss + msg_loss
+                
+                predicted_bits = (decoded_msg > 0.5).float()
+                bit_accuracy = (predicted_bits == message).float().mean()
+                
+                total_loss += loss.item()
+                total_bit_accuracy += bit_accuracy.item()
+                num_samples += 1
+    
+    return {
+        'loss': total_loss / num_samples,
+        'bit_accuracy': total_bit_accuracy / num_samples
     }
 
 def main():
@@ -206,18 +271,29 @@ def main():
     audio_dir = Path("./Dataset/dev-clean/LibriSpeech/dev-clean")
     audio_files = list(audio_dir.rglob("*.flac"))[:100]  # Use first 100 files for testing
     
-    dataset = AudioWatermarkingDataset(audio_files, msg_length=msg_length, cache_dir=cache_dir)
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=2, collate_fn=custom_collate_fn)
+    # Split into train and validation
+    split_idx = int(0.8 * len(audio_files))
+    train_files = audio_files[:split_idx]
+    val_files = audio_files[split_idx:]
+    
+    train_dataset = AudioWatermarkingDataset(train_files, msg_length=msg_length, cache_dir=cache_dir)
+    val_dataset = AudioWatermarkingDataset(val_files, msg_length=msg_length, cache_dir=cache_dir)
+    
+    train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=2, collate_fn=custom_collate_fn)
+    val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=2, collate_fn=custom_collate_fn)
     
     # Training loop
     total_epochs = start_epoch + num_epochs
     for epoch in range(start_epoch, total_epochs):
-        metrics = train_one_epoch(inn, msg_encoder, msg_decoder, dataloader, optimizer, device, epoch, cache_dir)
+        # Train
+        train_metrics = train_one_epoch(inn, msg_encoder, msg_decoder, train_dataloader, optimizer, device, epoch, cache_dir)
+        
+        # Validate
+        val_metrics = validate(inn, msg_encoder, msg_decoder, val_dataloader, device, cache_dir)
         
         print(f"Epoch {epoch+1}/{total_epochs}:")
-        print(f"  Loss: {metrics['loss']:.6f}")
-        print(f"  Message Loss: {metrics['msg_loss']:.6f}")
-        print(f"  Reconstruction Loss: {metrics['rec_loss']:.6f}")
+        print(f"  Train Loss: {train_metrics['loss']:.6f} | Train Acc: {train_metrics['bit_accuracy']*100:.2f}%")
+        print(f"  Val Loss:   {val_metrics['loss']:.6f} | Val Acc:   {val_metrics['bit_accuracy']*100:.2f}%")
         
         # Save checkpoint with custom name
         checkpoint_path = f'./checkpoints/{checkpoint_name}_epoch{epoch+1}.pt'
@@ -227,16 +303,17 @@ def main():
             'msg_decoder': msg_decoder.state_dict(),
             'optimizer': optimizer.state_dict(),
             'epoch': epoch,
-            'metrics': metrics,
+            'train_metrics': train_metrics,
+            'val_metrics': val_metrics,
             'config': {
                 'batch_size': batch_size,
                 'learning_rate': learning_rate,
                 'msg_length': msg_length
             }
         }, checkpoint_path)
-        print(f"Checkpoint saved: {checkpoint_path}")
+        print(f"Checkpoint saved: {checkpoint_path}\n")
     
-    print(f"\nTraining complete! Final checkpoint: ./checkpoints/{checkpoint_name}_epoch{total_epochs}.pt")
+    print(f"Training complete! Final checkpoint: ./checkpoints/{checkpoint_name}_epoch{total_epochs}.pt")
 
 if __name__ == "__main__":
     main()

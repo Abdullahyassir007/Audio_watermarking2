@@ -4,7 +4,7 @@ import torch
 from pathlib import Path
 
 def plot_training_history(checkpoint_dir, save_path=None):
-    """Plot training loss from checkpoints"""
+    """Plot training and validation loss and accuracy from checkpoints"""
     checkpoint_dir = Path(checkpoint_dir)
     checkpoint_files = sorted(checkpoint_dir.glob("*.pt"))
     
@@ -12,15 +12,25 @@ def plot_training_history(checkpoint_dir, save_path=None):
         print(f"No checkpoints found in {checkpoint_dir}")
         return
     
-    epochs, losses, msg_losses = [], [], []
+    epochs = []
+    train_losses, val_losses = [], []
+    train_accs, val_accs = [], []
     
     for ckpt_file in checkpoint_files:
         try:
             checkpoint = torch.load(ckpt_file, map_location='cpu')
             epochs.append(checkpoint['epoch'] + 1)
-            metrics = checkpoint.get('metrics', {})
-            losses.append(metrics.get('loss', 0))
-            msg_losses.append(metrics.get('msg_loss', 0))
+            
+            # Try new format first (train_metrics/val_metrics)
+            train_metrics = checkpoint.get('train_metrics', checkpoint.get('metrics', {}))
+            val_metrics = checkpoint.get('val_metrics', {})
+            
+            train_losses.append(train_metrics.get('loss', 0))
+            train_accs.append(train_metrics.get('bit_accuracy', 0) * 100)
+            
+            if val_metrics:
+                val_losses.append(val_metrics.get('loss', 0))
+                val_accs.append(val_metrics.get('bit_accuracy', 0) * 100)
         except:
             continue
     
@@ -28,21 +38,42 @@ def plot_training_history(checkpoint_dir, save_path=None):
         print("No valid checkpoint data")
         return
     
-    plt.figure(figsize=(10, 5))
-    plt.plot(epochs, losses, 'b-', linewidth=2, label='Total Loss')
-    plt.plot(epochs, msg_losses, 'r-', linewidth=2, label='Message Loss')
-    plt.xlabel('Epoch')
-    plt.ylabel('Loss')
-    plt.title('Training Loss')
-    plt.legend()
-    plt.grid(True, alpha=0.3)
+    # Create subplots
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
+    
+    # Plot 1: Loss
+    ax1.plot(epochs, train_losses, 'b-', linewidth=2, marker='o', label='Train Loss')
+    if val_losses:
+        ax1.plot(epochs, val_losses, 'r-', linewidth=2, marker='s', label='Val Loss')
+    ax1.set_xlabel('Epoch')
+    ax1.set_ylabel('Loss')
+    ax1.set_title('Training and Validation Loss')
+    ax1.legend()
+    ax1.grid(True, alpha=0.3)
+    
+    # Plot 2: Accuracy
+    ax2.plot(epochs, train_accs, 'b-', linewidth=2, marker='o', label='Train Accuracy')
+    if val_accs:
+        ax2.plot(epochs, val_accs, 'r-', linewidth=2, marker='s', label='Val Accuracy')
+    ax2.set_xlabel('Epoch')
+    ax2.set_ylabel('Accuracy (%)')
+    ax2.set_title('Training and Validation Accuracy')
+    ax2.set_ylim([0, 105])
+    ax2.axhline(y=100, color='green', linestyle='--', alpha=0.5, label='Perfect')
+    ax2.legend()
+    ax2.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
     
     if save_path:
         plt.savefig(save_path, dpi=150, bbox_inches='tight')
         print(f"Saved to {save_path}")
     
     plt.show()
-    print(f"Final Loss: {losses[-1]:.4f} | Best Loss: {min(losses):.4f}")
+    
+    print(f"Final Train Loss: {train_losses[-1]:.4f} | Train Acc: {train_accs[-1]:.2f}%")
+    if val_losses:
+        print(f"Final Val Loss: {val_losses[-1]:.4f} | Val Acc: {val_accs[-1]:.2f}%")
 
 def plot_accuracy(bit_accuracy, save_path=None):
     """Plot bit accuracy"""
