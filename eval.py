@@ -9,6 +9,8 @@ import os
 from models import INN2D, MsgToSpec, SpecToMsg, build_inn_input
 from audiowatermarking import wav_to_stft_tensor
 from train import AudioWatermarkingDataset, custom_collate_fn
+from plot_utils import (plot_evaluation_results, plot_bit_comparison, 
+                        plot_spectrogram_comparison, save_metrics_to_json)
 
 def evaluate_model(model, msg_encoder, msg_decoder, dataloader, device, cache_dir=None):
     """Evaluate the model on a dataset"""
@@ -230,6 +232,10 @@ def main():
         print(f"Reconstruction Loss:  {metrics['rec_loss']:.6f}")
         print(f"Bit Accuracy:         {metrics['bit_accuracy']*100:.2f}%")
         print("="*50)
+        
+        # Plot accuracy
+        from plot_utils import plot_accuracy
+        plot_accuracy(metrics['bit_accuracy'])
         
         # Test on a few random samples
         print("\nTesting on random samples:")
