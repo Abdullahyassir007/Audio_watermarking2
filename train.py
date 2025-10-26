@@ -138,6 +138,10 @@ def main():
                         help='Number of epochs (default: 1)')
     parser.add_argument('--lr', type=float, default=1e-4,
                         help='Learning rate (default: 1e-4)')
+    parser.add_argument('--resume', type=str, default=None,
+                        help='Path to checkpoint to resume from (e.g., checkpoints/model_bs4_ep10.pt)')
+    parser.add_argument('--name', type=str, default=None,
+                        help='Custom name for checkpoint files (default: auto-generated from config)')
     args = parser.parse_args()
     
     # Configuration
@@ -163,6 +167,15 @@ def main():
     learning_rate = args.lr
     num_epochs = args.epochs
     
+    # Create checkpoint directory
+    os.makedirs("./checkpoints", exist_ok=True)
+    
+    # Generate checkpoint name
+    if args.name:
+        checkpoint_name = args.name
+    else:
+        checkpoint_name = f"model_bs{batch_size}_lr{learning_rate}_ep{num_epochs}"
+    
     # Initialize models
     inn = INN2D(in_channels=4, hidden_channels=64, n_blocks=4).to(device)
     msg_encoder = MsgToSpec(msg_len=msg_length, msg_channels=1, base_spatial=(8, 8), hidden=128).to(device)
@@ -172,6 +185,23 @@ def main():
     params = list(inn.parameters()) + list(msg_encoder.parameters()) + list(msg_decoder.parameters())
     optimizer = optim.Adam(params, lr=learning_rate)
     
+    # Resume from checkpoint if specified
+    start_epoch = 0
+    if args.resume:
+        if os.path.exists(args.resume):
+            print(f"Resuming from checkpoint: {args.resume}")
+            checkpoint = torch.load(args.resume, map_location=device)
+            inn.load_state_dict(checkpoint['inn'])
+            msg_encoder.load_state_dict(checkpoint['msg_encoder'])
+            msg_decoder.load_state_dict(checkpoint['msg_decoder'])
+            optimizer.load_state_dict(checkpoint['optimizer'])
+            start_epoch = checkpoint['epoch'] + 1
+            print(f"Resuming from epoch {start_epoch}")
+        else:
+            print(f"Warning: Checkpoint {args.resume} not found. Starting fresh training.")
+    else:
+        print("Starting fresh training")
+    
     # Load dataset (using the same audio files as in audiowatermarking.py)
     audio_dir = Path("./Dataset/dev-clean/LibriSpeech/dev-clean")
     audio_files = list(audio_dir.rglob("*.flac"))[:100]  # Use first 100 files for testing
@@ -180,23 +210,33 @@ def main():
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=2, collate_fn=custom_collate_fn)
     
     # Training loop
-    for epoch in range(num_epochs):
+    total_epochs = start_epoch + num_epochs
+    for epoch in range(start_epoch, total_epochs):
         metrics = train_one_epoch(inn, msg_encoder, msg_decoder, dataloader, optimizer, device, epoch, cache_dir)
         
-        print(f"Epoch {epoch+1}/{num_epochs}:")
+        print(f"Epoch {epoch+1}/{total_epochs}:")
         print(f"  Loss: {metrics['loss']:.6f}")
         print(f"  Message Loss: {metrics['msg_loss']:.6f}")
         print(f"  Reconstruction Loss: {metrics['rec_loss']:.6f}")
         
-        # Save models
+        # Save checkpoint with custom name
+        checkpoint_path = f'./checkpoints/{checkpoint_name}_epoch{epoch+1}.pt'
         torch.save({
             'inn': inn.state_dict(),
             'msg_encoder': msg_encoder.state_dict(),
             'msg_decoder': msg_decoder.state_dict(),
             'optimizer': optimizer.state_dict(),
             'epoch': epoch,
-            'metrics': metrics
-        }, f'checkpoint_epoch_{epoch+1}.pt')
+            'metrics': metrics,
+            'config': {
+                'batch_size': batch_size,
+                'learning_rate': learning_rate,
+                'msg_length': msg_length
+            }
+        }, checkpoint_path)
+        print(f"Checkpoint saved: {checkpoint_path}")
+    
+    print(f"\nTraining complete! Final checkpoint: ./checkpoints/{checkpoint_name}_epoch{total_epochs}.pt")
 
 if __name__ == "__main__":
     main()
