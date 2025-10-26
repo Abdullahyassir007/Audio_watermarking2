@@ -8,6 +8,7 @@ from models import INN2D, MsgToSpec, SpecToMsg, build_inn_input
 from audiowatermarking import load_and_preprocess, wav_to_stft_tensor
 import torch.nn.functional as F
 import os
+import argparse
 
 class AudioWatermarkingDataset(Dataset):
     def __init__(self, audio_files, msg_length=32, cache_dir=None, transform=None):
@@ -121,13 +122,24 @@ def train_one_epoch(model, msg_encoder, msg_decoder, dataloader, optimizer, devi
     }
 
 def main():
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='Train Audio Watermarking Model')
+    parser.add_argument('--no-cache', action='store_true', 
+                        help='Disable caching (default: caching enabled)')
+    parser.add_argument('--batch-size', type=int, default=4,
+                        help='Batch size for training (default: 4)')
+    parser.add_argument('--epochs', type=int, default=1,
+                        help='Number of epochs (default: 1)')
+    parser.add_argument('--lr', type=float, default=1e-4,
+                        help='Learning rate (default: 1e-4)')
+    args = parser.parse_args()
+    
     # Configuration
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
     
-    # Ask user about caching
-    use_cache = input("Do you want to use caching? (yes/no): ").strip().lower()
-    use_cache = use_cache in ['yes', 'y']
+    # Setup caching based on argument
+    use_cache = not args.no_cache
     
     if use_cache:
         print("Caching enabled - processed files will be saved for faster loading")
@@ -140,10 +152,10 @@ def main():
         cache_dir = None
     
     # Hyperparameters
-    batch_size = 4
+    batch_size = args.batch_size
     msg_length = 32
-    learning_rate = 1e-4
-    num_epochs = 1
+    learning_rate = args.lr
+    num_epochs = args.epochs
     
     # Initialize models
     inn = INN2D(in_channels=4, hidden_channels=64, n_blocks=4).to(device)
