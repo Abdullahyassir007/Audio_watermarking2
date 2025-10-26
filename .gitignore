@@ -33,3 +33,11 @@ cache/
 # OS files
 .DS_Store
 Thumbs.db
+
+# CUDA compiled files
+*.i
+*.ii
+*.gpu
+*.ptx
+*.cubin
+*.fatbin
